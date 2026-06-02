@@ -12,4 +12,4 @@ pi install /absolute/path/to/<extension>
 
 ## Extensions
 
-- **[notify/](./notify)** — GNOME desktop notifications with tmux click-to-jump.
+- **[pi-tmux-notify/](./pi-tmux-notify)** — GNOME desktop notifications with tmux click-to-jump.
