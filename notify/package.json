@@ -1,0 +1,24 @@
+{
+  "name": "pi-tmux-notify",
+  "version": "0.1.0",
+  "description": "Pi extension: GNOME desktop notifications with click-to-jump that switches to the tmux pane hosting pi",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "index.ts",
+    "dbus.ts",
+    "tmux.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@particle/dbus-next": "^0.11.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
