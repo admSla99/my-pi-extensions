@@ -7,7 +7,8 @@
   "type": "module",
   "workspaces": [
     "pi-tmux-notify",
-    "pi-prompt-enhancer"
+    "pi-prompt-enhancer",
+    "pi-context-report"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present"
