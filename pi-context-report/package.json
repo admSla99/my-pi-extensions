@@ -1,0 +1,23 @@
+{
+  "name": "pi-context-report",
+  "version": "0.1.0",
+  "description": "Pi extension: /context command that reports context-window usage broken down by category (system prompt, user messages, tool calls + results, cache) for the current session",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
