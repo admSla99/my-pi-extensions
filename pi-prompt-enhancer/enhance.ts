@@ -117,7 +117,10 @@ export function buildRequest(
   if (preserveLang) systemParts.push(LANGUAGE_DIRECTIVE_SYSTEM);
 
   const systemPrompt = systemParts.join("\n\n");
-  let userText = template.userTemplate.replaceAll("{{draft}}", draft).replaceAll("{{family}}", family);
+  // Substitute {{family}} BEFORE {{draft}} so any literal `{{family}}` token
+  // inside the user's draft is not accidentally rewritten by the second pass.
+  // (CodeRabbit PR #1 finding.)
+  let userText = template.userTemplate.replaceAll("{{family}}", family).replaceAll("{{draft}}", draft);
   if (preserveLang) userText = `${userText}\n\n${LANGUAGE_DIRECTIVE_USER}`;
 
   return {

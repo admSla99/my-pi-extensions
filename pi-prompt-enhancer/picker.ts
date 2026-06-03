@@ -62,8 +62,23 @@ async function showPicker(
 ): Promise<Template | undefined> {
   // Surface the configured default first so it's a single Enter away.
   const ordered = orderWithDefaultFirst(templates, defaultId);
-  const labels = ordered.map((tpl) => formatLabel(tpl));
-  const labelToTemplate = new Map(labels.map((label, idx) => [label, ordered[idx]!]));
+
+  // Two distinct templates can render to the same `formatLabel` output (same
+  // display name and same first 4 keywords). If we mapped raw label → template
+  // the second one would silently shadow the first. Disambiguate by appending
+  // ` (<id>)` on collision — the id is always unique by filename.
+  // (CodeRabbit PR #1 finding.)
+  const labels: string[] = [];
+  const labelToTemplate = new Map<string, Template>();
+  const seen = new Map<string, number>();
+  for (const tpl of ordered) {
+    const base = formatLabel(tpl);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    const label = count === 1 ? base : `${base} (${tpl.id})`;
+    labels.push(label);
+    labelToTemplate.set(label, tpl);
+  }
 
   const selected = await ctx.ui.select("Pick prompt technique", labels);
   if (!selected) return undefined;

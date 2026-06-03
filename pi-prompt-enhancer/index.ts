@@ -147,7 +147,12 @@ async function runEnhance(ctx: ExtensionContext, runtime: Runtime, opts: RunEnha
     return;
   }
 
-  const draft = ctx.ui.getEditorText().trim();
+  // Capture the editor content RAW so undo restores exactly what the user had,
+  // including any intentional leading/trailing whitespace. Use a trimmed view
+  // only for emptiness validation and for keyword-based picker matching.
+  // (CodeRabbit PR #1 finding.)
+  const rawDraft = ctx.ui.getEditorText();
+  const draft = rawDraft.trim();
   if (!draft) {
     ctx.ui.notify("Editor is empty — nothing to enhance.", "info");
     return;
@@ -169,14 +174,14 @@ async function runEnhance(ctx: ExtensionContext, runtime: Runtime, opts: RunEnha
   runtime.busy = true;
   try {
     const refined = await runWithLoader(ctx, `Rewriting with ${pick.template.id}…`, async (signal) => {
-      const result = await enhanceDraft(ctx, runtime.settings, pick!.template, draft, signal);
+      const result = await enhanceDraft(ctx, runtime.settings, pick!.template, rawDraft, signal);
       return result.refined;
     });
     if (refined === null) {
       ctx.ui.notify("Enhancement cancelled.", "info");
       return;
     }
-    runtime.previousDraft = draft;
+    runtime.previousDraft = rawDraft;
     ctx.ui.setEditorText(refined);
 
     if (runtime.settings.notify) {
@@ -372,5 +377,10 @@ function setPreserveLanguage(ctx: ExtensionCommandContext, runtime: Runtime, val
 function parseModelRef(spec: string): ModelRef | undefined {
   const slash = spec.indexOf("/");
   if (slash <= 0 || slash === spec.length - 1) return undefined;
-  return { provider: spec.slice(0, slash).trim(), id: spec.slice(slash + 1).trim() };
+  // Reject specs whose provider or id is empty after trimming (e.g. "openai/   ").
+  // (CodeRabbit PR #1 finding.)
+  const provider = spec.slice(0, slash).trim();
+  const id = spec.slice(slash + 1).trim();
+  if (!provider || !id) return undefined;
+  return { provider, id };
 }
