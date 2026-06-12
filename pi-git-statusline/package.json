@@ -1,0 +1,22 @@
+{
+  "name": "pi-git-statusline",
+  "version": "0.1.0",
+  "description": "Pi extension: status-line indicator showing added/removed line counts (and changed file count) for the working tree vs HEAD, including untracked files",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
