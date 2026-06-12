@@ -39,6 +39,7 @@ Each extension's `package.json` is the source of truth for its own peer/dev depe
 - **[pi-tmux-notify/](./pi-tmux-notify)** — GNOME desktop notifications with tmux click-to-jump.
 - **[pi-prompt-enhancer/](./pi-prompt-enhancer)** — Minimal, configurable prompt rewriter. `Alt+E` / `/pe` rewrites the editor draft using Markdown-defined techniques, with GPT/Claude family branching and draft-language preservation.
 - **[pi-context-report/](./pi-context-report)** — `/context` command reporting context-window usage (system prompt / user / tool calls + results / cache) for the current session.
+- **[pi-git-diff-status/](./pi-git-diff-status)** — status-line indicator showing `+added -removed (~N files)` for the working tree vs HEAD, including untracked files.
 
 ## Adding a new extension
 

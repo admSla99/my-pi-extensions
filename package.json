@@ -8,7 +8,8 @@
   "workspaces": [
     "pi-tmux-notify",
     "pi-prompt-enhancer",
-    "pi-context-report"
+    "pi-context-report",
+    "pi-git-diff-status"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present"
