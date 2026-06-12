@@ -1,25 +1,38 @@
 # pi-git-diff-status
 
-A Pi status-line extension that shows how many lines changed in the current
-working tree, based on git.
+A Pi status-line extension that shows how many lines changed, based on git.
+It has two segments:
 
 ```
-+12 -3 (~4 files)
++12 -3 (~4 files) │ ⎇ +120 -45 (~9 files)
+└── working tree vs HEAD ┘   └── branch vs base ┘
 ```
 
 - Green `+N` — added lines
 - Red `-N` — removed lines
 - Dim `(~N files)` — number of changed files
 
-When the tree is clean it shows a dim `±0`. Outside a git repository the status
-is hidden.
+Outside a git repository the status is hidden.
 
 ## What it measures
+
+### Segment 1 — uncommitted changes vs HEAD
 
 - **Baseline:** `HEAD` — i.e. all uncommitted changes.
 - **Scope:** staged + unstaged changes (`git diff --numstat HEAD`) plus
   **untracked** files (their lines are counted as additions; binary files are
   skipped).
+- Shows a dim `±0` when the working tree is clean.
+
+### Segment 2 — branch vs base (committed only)
+
+- **Base:** auto-detected: `origin/HEAD` → `origin/main`/`main` →
+  `origin/master`/`master`.
+- **Scope:** committed changes the branch introduces
+  (`git diff --numstat <base>...HEAD`, three-dot / merge-base). Untracked and
+  uncommitted changes are **not** counted here — they live in segment 1.
+- **Hidden** when there is nothing ahead of base (e.g. you are on the base
+  branch itself, or your branch tip equals the base tip).
 
 ## When it refreshes
 
