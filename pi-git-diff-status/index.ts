@@ -139,10 +139,10 @@ async function detectBase(cwd: string): Promise<string | null> {
  * Segment 2: committed changes the current branch introduces vs base.
  * Returns null when there is nothing ahead of base (or no base / detached on base).
  */
-async function computeBranchStats(cwd: string): Promise<DiffStats | null> {
-	const base = await detectBase(cwd);
-	if (!base) return null;
-
+async function computeBranchStats(
+	cwd: string,
+	base: string,
+): Promise<DiffStats | null> {
 	// Skip if HEAD is already contained in base (e.g. we're on the base branch).
 	const mergeBase = (await tryGit(cwd, ["merge-base", base, "HEAD"]))?.trim();
 	const head = (await tryGit(cwd, ["rev-parse", "HEAD"]))?.trim();
@@ -160,6 +160,62 @@ async function computeBranchStats(cwd: string): Promise<DiffStats | null> {
 
 function fileLabel(n: number): string {
 	return ` (~${n} file${n === 1 ? "" : "s"})`;
+}
+
+/** Short branch name for the base ref, e.g. origin/main → main. */
+function baseShortName(base: string): string {
+	return base.replace(/^origin\//, "");
+}
+
+async function currentBranch(cwd: string): Promise<string | null> {
+	const b = (await tryGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]))?.trim();
+	if (!b || b === "HEAD") return null; // no branch / detached
+	return b;
+}
+
+// Cache the (network) PR lookup per branch so frequent refreshes stay cheap.
+const PR_TTL_MS = 5 * 60 * 1000;
+interface PrCache {
+	branch: string;
+	number: number | null;
+	at: number;
+}
+let prCache: PrCache | null = null;
+
+/** Open PR number for `branch` via the GitHub CLI, or null. Cached with a TTL. */
+async function getOpenPrNumber(
+	cwd: string,
+	branch: string,
+): Promise<number | null> {
+	const now = Date.now();
+	if (prCache && prCache.branch === branch && now - prCache.at < PR_TTL_MS) {
+		return prCache.number;
+	}
+	let number: number | null = null;
+	try {
+		const { stdout } = await exec(
+			"gh",
+			[
+				"pr",
+				"list",
+				"--head",
+				branch,
+				"--state",
+				"open",
+				"--json",
+				"number",
+				"--limit",
+				"1",
+			],
+			{ cwd, timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
+		);
+		const arr = JSON.parse(stdout) as Array<{ number: number }>;
+		number = arr.length > 0 ? arr[0].number : null;
+	} catch {
+		number = null; // gh missing / not authed / timeout / error
+	}
+	prCache = { branch, number, at: now };
+	return number;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -180,6 +236,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const theme = ctx.ui.theme;
+			const base = await detectBase(ctx.cwd);
+			const branch = await currentBranch(ctx.cwd);
 
 			// Segment 1: working tree vs HEAD.
 			const wt = await computeWorkingStats(ctx.cwd);
@@ -194,17 +252,31 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("dim", fileLabel(wt.files));
 			}
 
-			// Segment 2: branch vs base (committed only), hidden when empty.
-			const br = await computeBranchStats(ctx.cwd);
+			const sep = theme.fg("dim", "│");
 			let status = seg1;
-			if (br) {
-				const seg2 =
-					theme.fg("dim", "⎇ ") +
-					theme.fg("success", `+${br.added}`) +
-					" " +
-					theme.fg("error", `-${br.removed}`) +
-					theme.fg("dim", fileLabel(br.files));
-				status = `${seg1} ${theme.fg("dim", "│")} ${seg2}`;
+
+			// Segment 2: branch vs base (committed only), hidden when empty.
+			if (base) {
+				const br = await computeBranchStats(ctx.cwd, base);
+				if (br) {
+					const seg2 =
+						theme.fg("dim", "⎇ ") +
+						theme.fg("success", `+${br.added}`) +
+						" " +
+						theme.fg("error", `-${br.removed}`) +
+						theme.fg("dim", fileLabel(br.files));
+					status = `${status} ${sep} ${seg2}`;
+				}
+			}
+
+			// Segment 3: open PR number for the current branch (skip on base branch).
+			if (branch && (!base || branch !== baseShortName(base))) {
+				const pr = await getOpenPrNumber(ctx.cwd, branch);
+				if (pr != null) {
+					const seg3 =
+						theme.fg("dim", "PR ") + theme.fg("accent", `#${pr}`);
+					status = `${status} ${sep} ${seg3}`;
+				}
 			}
 
 			ctx.ui.setStatus(STATUS_ID, status);

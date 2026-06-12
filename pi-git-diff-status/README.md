@@ -1,11 +1,11 @@
 # pi-git-diff-status
 
 A Pi status-line extension that shows how many lines changed, based on git.
-It has two segments:
+It has up to three segments:
 
 ```
-+12 -3 (~4 files) │ ⎇ +120 -45 (~9 files)
-└── working tree vs HEAD ┘   └── branch vs base ┘
++12 -3 (~4 files) │ ⎇ +120 -45 (~9 files) │ PR #123
+└── working tree vs HEAD ┘   └── branch vs base ┘   └ open PR ┘
 ```
 
 - Green `+N` — added lines
@@ -33,6 +33,16 @@ Outside a git repository the status is hidden.
   uncommitted changes are **not** counted here — they live in segment 1.
 - **Hidden** when there is nothing ahead of base (e.g. you are on the base
   branch itself, or your branch tip equals the base tip).
+
+### Segment 3 — open PR number
+
+- Shows `PR #123` when an **open** pull request exists for the current branch.
+- Looked up via the GitHub CLI: `gh pr list --head <branch> --state open`.
+- **Hidden** when there is no open PR, `gh` is unavailable / not authenticated,
+  or you are on the base branch.
+- Requires the [`gh`](https://cli.github.com/) CLI, authenticated for the
+  repo's host (`gh auth status`). The lookup is cached per branch (5 min TTL)
+  and runs with a timeout, so the status line never blocks on the network.
 
 ## When it refreshes
 
