@@ -1,4 +1,4 @@
-# pi-git-diff-status
+# pi-git-statusline
 
 A Pi status-line extension that shows how many lines changed, based on git.
 It has up to three segments:
@@ -72,11 +72,11 @@ theme (`~/.pi/agent/themes/*.json`), not this extension.
 Load ad-hoc:
 
 ```bash
-pi -e ./pi-git-diff-status/index.ts
+pi -e ./pi-git-statusline/index.ts
 ```
 
 Or install system-wide:
 
 ```bash
-pi install /absolute/path/to/pi-git-diff-status
+pi install /absolute/path/to/pi-git-statusline
 ```

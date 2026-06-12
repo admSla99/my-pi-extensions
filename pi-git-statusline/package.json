@@ -1,5 +1,5 @@
 {
-  "name": "pi-git-diff-status",
+  "name": "pi-git-statusline",
   "version": "0.1.0",
   "description": "Pi extension: status-line indicator showing added/removed line counts (and changed file count) for the working tree vs HEAD, including untracked files",
   "type": "module",

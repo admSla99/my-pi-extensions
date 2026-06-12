@@ -1,5 +1,5 @@
 /**
- * Git Diff Status Line
+ * Git Status Line
  *
  * Footer status line with two segments:
  *
@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const STATUS_ID = "git-diff";
+const STATUS_ID = "git-statusline";
 const exec = promisify(execFile);
 
 async function git(cwd: string, args: string[]): Promise<string> {
