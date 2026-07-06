@@ -69,23 +69,47 @@ interface Plugin {
 	installs: Install[];
 }
 
+type ResourceType = "skills" | "commands" | "agents";
+const RESOURCE_TYPES: ResourceType[] = ["skills", "commands", "agents"];
+
 interface State {
-	disabled: string[];
+	disabled: string[]; // whole plugins turned off
+	// Per-plugin resource types turned off, e.g. { "agentix@mp": ["commands"] }.
+	typesOff: Record<string, ResourceType[]>;
 }
 
-// ── State (pi-side enable/disable; default enabled) ────────────────────
+// ── State (pi-side enable/disable; default everything enabled) ──────────
 
 function loadState(): State {
 	try {
 		const raw = JSON.parse(fs.readFileSync(STATE_PATH, "utf-8"));
-		if (Array.isArray(raw?.disabled)) return { disabled: raw.disabled };
-	} catch {}
-	return { disabled: [] };
+		return {
+			disabled: Array.isArray(raw?.disabled) ? raw.disabled : [],
+			typesOff:
+				raw?.typesOff && typeof raw.typesOff === "object" ? raw.typesOff : {},
+		};
+	} catch {
+		return { disabled: [], typesOff: {} };
+	}
 }
 
 function saveState(state: State): void {
+	// Drop empty type arrays to keep the file tidy.
+	const typesOff: Record<string, ResourceType[]> = {};
+	for (const [id, types] of Object.entries(state.typesOff)) {
+		if (types.length) typesOff[id] = types;
+	}
 	fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-	fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+	fs.writeFileSync(
+		STATE_PATH,
+		JSON.stringify({ disabled: state.disabled, typesOff }, null, 2),
+	);
+}
+
+/** A resource type is active for a plugin unless its plugin or type is off. */
+function typeActive(state: State, id: string, type: ResourceType): boolean {
+	if (state.disabled.includes(id)) return false;
+	return !(state.typesOff[id]?.includes(type) ?? false);
 }
 
 // ── Discovery (Claude registry -> Plugin[]) ────────────────────────────
@@ -224,8 +248,10 @@ function registerAgents(cwd: string): string[] {
 	unregisterOurAgents();
 	const hook = subagentHook();
 	if (!hook) return []; // pi-subagents not installed; skills/commands still work.
+	const state = loadState();
 	const names: string[] = [];
-	for (const { install } of activePlugins(cwd)) {
+	for (const { plugin, install } of activePlugins(cwd)) {
+		if (!typeActive(state, plugin.id, "agents")) continue;
 		for (const file of listMd(path.join(install.installPath, "agents"))) {
 			try {
 				const { frontmatter, body } = parseFrontmatter<Record<string, string>>(
@@ -253,52 +279,74 @@ function registerAgents(cwd: string): string[] {
 
 // ── Interactive /plugins toggle UI ─────────────────────────────────────
 
-function resourceTag(installPath: string): string {
-	const parts: string[] = [];
-	if (dirIfExists(path.join(installPath, "skills"))) parts.push("skills");
-	if (dirIfExists(path.join(installPath, "commands"))) parts.push("cmds");
-	const agents = listMd(path.join(installPath, "agents")).length;
-	if (agents) parts.push(`agents:${agents}`);
-	return parts.length ? parts.join(" ") : "no resources";
-}
-
 /** Install to display in the UI: the one active here, else the first known. */
 function displayInstall(plugin: Plugin, cwd: string): Install {
 	return activeInstall(plugin, cwd) ?? plugin.installs[0];
 }
 
+/** Which resource types a plugin actually ships (from its display install). */
+function pluginHas(plugin: Plugin, cwd: string): Record<ResourceType, boolean> {
+	const ip = displayInstall(plugin, cwd).installPath;
+	return {
+		skills: !!dirIfExists(path.join(ip, "skills")),
+		commands: !!dirIfExists(path.join(ip, "commands")),
+		agents: listMd(path.join(ip, "agents")).length > 0,
+	};
+}
+
+const TYPE_LETTER: Record<ResourceType, string> = { skills: "S", commands: "C", agents: "A" };
+
 async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 	const cwd = ctx.cwd;
 	const plugins = discoverPlugins();
 
+	if (plugins.length === 0) {
+		ctx.ui.notify(
+			"No Claude plugins found (~/.claude/plugins/installed_plugins.json). Install some with Claude Code first.",
+			ctx.hasUI ? "warning" : "info",
+		);
+		return;
+	}
+
+	// Working copy of state, mutated in the UI, persisted on apply.
+	const disabled = new Set(loadState().disabled);
+	const typesOff = new Map<string, Set<ResourceType>>();
+	for (const [id, types] of Object.entries(loadState().typesOff)) {
+		typesOff.set(id, new Set(types));
+	}
+	const typeOn = (id: string, t: ResourceType) =>
+		!disabled.has(id) && !typesOff.get(id)?.has(t);
+
 	if (!ctx.hasUI) {
-		const disabled = new Set(loadState().disabled);
 		const lines = plugins.map((p) => {
 			const active = !!activeInstall(p, cwd);
-			const state = disabled.has(p.id) ? "[ ]" : active ? "[x]" : "[-]";
-			const inst = displayInstall(p, cwd);
-			return `${state} ${p.id}  (${scopeLabel(p)}; ${resourceTag(inst.installPath)})`;
+			const box = disabled.has(p.id) ? "[ ]" : active ? "[x]" : "[-]";
+			const has = pluginHas(p, cwd);
+			const types = RESOURCE_TYPES.filter((t) => has[t])
+				.map((t) => `${t}${typeOn(p.id, t) ? "✓" : "✗"}`)
+				.join(" ");
+			return `${box} ${p.id}  (${scopeLabel(p)}; ${types || "no resources"})`;
 		});
 		ctx.ui.notify(
-			plugins.length
-				? `Claude plugins ([x] active here, [-] out of scope, [ ] disabled):\n${lines.join("\n")}`
-				: "No Claude plugins found (~/.claude/plugins/installed_plugins.json).",
+			`Claude plugins ([x] active here, [-] out of scope, [ ] disabled):\n${lines.join("\n")}`,
 			"info",
 		);
 		return;
 	}
 
-	if (plugins.length === 0) {
-		ctx.ui.notify("No Claude plugins found. Install some with Claude Code first.", "warning");
-		return;
-	}
-
-	const disabled = new Set(loadState().disabled);
 	const changed = await ctx.ui.custom<boolean>((tui, theme, _kb, done) => {
 		let cursor = 0;
+		const refresh = () => tui.requestRender();
 
-		function refresh() {
-			tui.requestRender();
+		function typeBadges(p: Plugin): string {
+			const has = pluginHas(p, cwd);
+			return RESOURCE_TYPES.map((t) => {
+				const letter = TYPE_LETTER[t];
+				if (!has[t]) return theme.fg("dim", "·");
+				return typeOn(p.id, t)
+					? theme.fg("success", letter)
+					: theme.fg("error", letter.toLowerCase());
+			}).join(" ");
 		}
 
 		// Build a fresh container each render so it always reflects live state.
@@ -308,7 +356,10 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 			const rows: string[] = [];
 			rows.push(theme.fg("accent", theme.bold("Claude plugins in pi")));
 			rows.push(theme.fg("dim", `cwd: ${cwd}`));
-			rows.push(theme.fg("dim", "space: toggle   ↑/↓: move   enter: apply+reload   esc: cancel"));
+			rows.push(
+				theme.fg("dim", "space: plugin on/off   s/c/a: skills/commands/agents"),
+			);
+			rows.push(theme.fg("dim", "↑/↓: move   enter: apply+reload   esc: cancel"));
 			rows.push("");
 			plugins.forEach((p, i) => {
 				const enabled = !disabled.has(p.id);
@@ -321,8 +372,7 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 				const pointer = i === cursor ? theme.fg("accent", "›") : " ";
 				const label = i === cursor ? theme.bold(p.id) : p.id;
 				const scope = theme.fg(active ? "text" : "muted", scopeLabel(p));
-				const tag = theme.fg("dim", resourceTag(displayInstall(p, cwd).installPath));
-				rows.push(`${pointer} ${box} ${label}  ${scope}  ${tag}`);
+				rows.push(`${pointer} ${box} ${typeBadges(p)}  ${label}  ${scope}`);
 			});
 			container.addChild(border);
 			for (const r of rows) container.addChild(new Text(r, 1, 0));
@@ -330,10 +380,22 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 			return container;
 		}
 
+		function toggleType(p: Plugin, t: ResourceType) {
+			if (!pluginHas(p, cwd)[t]) return; // no such resource — ignore
+			let set = typesOff.get(p.id);
+			if (!set) {
+				set = new Set();
+				typesOff.set(p.id, set);
+			}
+			if (set.has(t)) set.delete(t);
+			else set.add(t);
+		}
+
 		return {
 			render: (width: number): string[] => build().render(width),
 			invalidate: () => {},
 			handleInput: (data: string) => {
+				const p = plugins[cursor];
 				if (matchesKey(data, Key.up) || data === "k") {
 					cursor = (cursor - 1 + plugins.length) % plugins.length;
 					refresh();
@@ -341,9 +403,17 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 					cursor = (cursor + 1) % plugins.length;
 					refresh();
 				} else if (data === " ") {
-					const id = plugins[cursor].id;
-					if (disabled.has(id)) disabled.delete(id);
-					else disabled.add(id);
+					if (disabled.has(p.id)) disabled.delete(p.id);
+					else disabled.add(p.id);
+					refresh();
+				} else if (data === "s") {
+					toggleType(p, "skills");
+					refresh();
+				} else if (data === "c") {
+					toggleType(p, "commands");
+					refresh();
+				} else if (data === "a") {
+					toggleType(p, "agents");
 					refresh();
 				} else if (matchesKey(data, Key.enter)) {
 					done(true);
@@ -359,7 +429,9 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 		return;
 	}
 
-	saveState({ disabled: Array.from(disabled) });
+	const typesOffObj: Record<string, ResourceType[]> = {};
+	for (const [id, set] of typesOff) typesOffObj[id] = Array.from(set);
+	saveState({ disabled: Array.from(disabled), typesOff: typesOffObj });
 	ctx.ui.notify("Saved. Reloading resources…", "info");
 	await ctx.reload();
 }
@@ -371,13 +443,14 @@ export default function (pi: ExtensionAPI) {
 	// user-scoped plugins are global; project/local plugins only load when the
 	// cwd is inside their projectPath. No settings.json edits.
 	pi.on("resources_discover", (event) => {
+		const state = loadState();
 		const skillPaths: string[] = [];
 		const promptPaths: string[] = [];
-		for (const { install } of activePlugins(event.cwd)) {
+		for (const { plugin, install } of activePlugins(event.cwd)) {
 			const skills = dirIfExists(path.join(install.installPath, "skills"));
 			const commands = dirIfExists(path.join(install.installPath, "commands"));
-			if (skills) skillPaths.push(skills);
-			if (commands) promptPaths.push(commands);
+			if (skills && typeActive(state, plugin.id, "skills")) skillPaths.push(skills);
+			if (commands && typeActive(state, plugin.id, "commands")) promptPaths.push(commands);
 		}
 		return { skillPaths, promptPaths };
 	});

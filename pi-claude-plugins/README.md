@@ -81,23 +81,39 @@ extension — keep those entries.
 Opens an interactive list of every discovered Claude plugin:
 
 - `↑`/`↓` (or `j`/`k`) — move
-- `space` — enable/disable the plugin
+- `space` — enable/disable the whole plugin
+- `s` / `c` / `a` — toggle just **skills** / **commands** / **agents** for the
+  selected plugin
 - `enter` — save and reload resources
 - `esc` — cancel
 
-Each row shows which resource types the plugin provides
-(`skills`, `cmds`, `agents:N`). Enabled by default; disabling a plugin drops its
-skills/commands/agents on the next reload.
+Each row shows three badges `S C A` (skills / commands / agents):
+
+- green uppercase (`S`) — provided and on
+- red lowercase (`s`) — provided but turned off
+- dim dot (`·`) — the plugin doesn't ship that type
+
+So you can, for example, keep a plugin's skills while dropping its slash
+commands (which become pi prompt templates) — handy when a plugin adds
+`/commands` you never use. Everything is enabled by default; changes apply on
+reload.
 
 ## State
 
 Enable/disable choices live in `~/.pi/agent/claude-plugins-state.json`:
 
 ```json
-{ "disabled": ["plugin-name@marketplace"] }
+{
+  "disabled": ["plugin-name@marketplace"],
+  "typesOff": { "other-plugin@marketplace": ["commands"] }
+}
 ```
 
-Anything not listed there is enabled. Delete the file to re-enable everything.
+- `disabled` — whole plugins turned off.
+- `typesOff` — per-plugin resource types turned off (`skills` / `commands` /
+  `agents`).
+
+Anything not listed is enabled. Delete the file to re-enable everything.
 
 ## Notes / limitations
 
