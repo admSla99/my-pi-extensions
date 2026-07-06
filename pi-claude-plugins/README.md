@@ -22,6 +22,29 @@ reload.
 
 `hooks/` are Claude-specific and are **not** ported.
 
+## Scope
+
+Claude Code installs each plugin with a scope, which this extension honors
+against the current working directory:
+
+| Claude scope | Loads in pi when |
+|--------------|------------------|
+| `user`       | always (global, all projects) |
+| `project` / `local` | cwd is inside the plugin's `projectPath` |
+
+So a plugin installed local to `~/Projects/foo` only contributes its
+skills/commands/agents while you run pi inside `~/Projects/foo`; it stays out of
+scope everywhere else. Because pi rediscovers resources per session, switching
+projects (or `/reload`) re-applies scoping.
+
+In the `/plugins` list the checkbox reflects this:
+
+- `[x]` enabled **and** active in the current cwd
+- `[-]` enabled but out of scope here (its project is elsewhere)
+- `[ ]` disabled
+
+Each row also shows the scope (`global`, or `local:~/Projects/foo`).
+
 ## Requirements
 
 - Claude Code installed, with plugins under `~/.claude/plugins/`.

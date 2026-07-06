@@ -56,14 +56,17 @@ const DEFAULT_AGENT_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "l
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+interface Install {
+	scope: string; // "user" | "project" | "local"
+	projectPath?: string; // set for project/local scope
+	installPath: string;
+}
+
 interface Plugin {
 	id: string; // "name@marketplace"
 	name: string;
 	marketplace: string;
-	installPath: string;
-	skillsDir?: string;
-	commandsDir?: string;
-	agentFiles: string[];
+	installs: Install[];
 }
 
 interface State {
@@ -106,7 +109,7 @@ function listMd(dir: string): string[] {
 	}
 }
 
-/** Read Claude's installed_plugins.json and resolve each plugin's install dir. */
+/** Read Claude's installed_plugins.json and resolve each plugin's installs. */
 function discoverPlugins(): Plugin[] {
 	let data: any;
 	try {
@@ -118,28 +121,63 @@ function discoverPlugins(): Plugin[] {
 	const entries: Record<string, any[]> = data?.plugins ?? {};
 	for (const [id, installs] of Object.entries(entries)) {
 		if (!Array.isArray(installs)) continue;
-		// Pick the first install whose path exists on disk.
-		const install = installs.find((i) => i?.installPath && dirIfExists(i.installPath));
-		if (!install) continue;
-		const installPath: string = install.installPath;
+		// Keep every install whose path exists on disk, with its scope.
+		const resolved: Install[] = installs
+			.filter((i) => i?.installPath && dirIfExists(i.installPath))
+			.map((i) => ({
+				scope: String(i.scope ?? "user"),
+				projectPath: i.projectPath,
+				installPath: i.installPath as string,
+			}));
+		if (resolved.length === 0) continue;
 		const [name, marketplace = "?"] = id.split("@");
-		plugins.push({
-			id,
-			name,
-			marketplace,
-			installPath,
-			skillsDir: dirIfExists(path.join(installPath, "skills")),
-			commandsDir: dirIfExists(path.join(installPath, "commands")),
-			agentFiles: listMd(path.join(installPath, "agents")),
-		});
+		plugins.push({ id, name, marketplace, installs: resolved });
 	}
 	plugins.sort((a, b) => a.id.localeCompare(b.id));
 	return plugins;
 }
 
+/** True when `cwd` is inside (or equal to) `dir`. */
+function within(cwd: string, dir: string): boolean {
+	const rel = path.relative(dir, cwd);
+	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * The install that applies to `cwd`, or undefined if the plugin is out of scope
+ * here. `user` scope is global; `project`/`local` only apply under projectPath.
+ */
+function activeInstall(plugin: Plugin, cwd: string): Install | undefined {
+	const user = plugin.installs.find((i) => i.scope === "user");
+	if (user) return user;
+	return plugin.installs.find((i) => i.projectPath && within(cwd, i.projectPath));
+}
+
+/** Human-readable scope label for the UI. */
+function scopeLabel(plugin: Plugin): string {
+	if (plugin.installs.some((i) => i.scope === "user")) return "global";
+	const scoped = plugin.installs.find((i) => i.projectPath);
+	if (!scoped) return "?";
+	const home = os.homedir();
+	const p = scoped.projectPath!.startsWith(home)
+		? `~${scoped.projectPath!.slice(home.length)}`
+		: scoped.projectPath!;
+	return `${scoped.scope}:${p}`;
+}
+
 function enabledPlugins(): Plugin[] {
 	const disabled = new Set(loadState().disabled);
 	return discoverPlugins().filter((p) => !disabled.has(p.id));
+}
+
+/** Enabled plugins whose scope applies to `cwd`, paired with the active install. */
+function activePlugins(cwd: string): Array<{ plugin: Plugin; install: Install }> {
+	const result: Array<{ plugin: Plugin; install: Install }> = [];
+	for (const plugin of enabledPlugins()) {
+		const install = activeInstall(plugin, cwd);
+		if (install) result.push({ plugin, install });
+	}
+	return result;
 }
 
 // ── Agents -> pi-subagents ─────────────────────────────────────────────
@@ -182,13 +220,13 @@ function unregisterOurAgents(): void {
 	registeredAgents = [];
 }
 
-function registerAgents(): string[] {
+function registerAgents(cwd: string): string[] {
 	unregisterOurAgents();
 	const hook = subagentHook();
 	if (!hook) return []; // pi-subagents not installed; skills/commands still work.
 	const names: string[] = [];
-	for (const plugin of enabledPlugins()) {
-		for (const file of plugin.agentFiles) {
+	for (const { install } of activePlugins(cwd)) {
+		for (const file of listMd(path.join(install.installPath, "agents"))) {
 			try {
 				const { frontmatter, body } = parseFrontmatter<Record<string, string>>(
 					fs.readFileSync(file, "utf-8"),
@@ -215,25 +253,35 @@ function registerAgents(): string[] {
 
 // ── Interactive /plugins toggle UI ─────────────────────────────────────
 
-function resourceTag(p: Plugin): string {
+function resourceTag(installPath: string): string {
 	const parts: string[] = [];
-	if (p.skillsDir) parts.push("skills");
-	if (p.commandsDir) parts.push(`cmds`);
-	if (p.agentFiles.length) parts.push(`agents:${p.agentFiles.length}`);
+	if (dirIfExists(path.join(installPath, "skills"))) parts.push("skills");
+	if (dirIfExists(path.join(installPath, "commands"))) parts.push("cmds");
+	const agents = listMd(path.join(installPath, "agents")).length;
+	if (agents) parts.push(`agents:${agents}`);
 	return parts.length ? parts.join(" ") : "no resources";
 }
 
+/** Install to display in the UI: the one active here, else the first known. */
+function displayInstall(plugin: Plugin, cwd: string): Install {
+	return activeInstall(plugin, cwd) ?? plugin.installs[0];
+}
+
 async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
+	const cwd = ctx.cwd;
 	const plugins = discoverPlugins();
 
 	if (!ctx.hasUI) {
 		const disabled = new Set(loadState().disabled);
-		const lines = plugins.map(
-			(p) => `${disabled.has(p.id) ? "[ ]" : "[x]"} ${p.id}  (${resourceTag(p)})`,
-		);
+		const lines = plugins.map((p) => {
+			const active = !!activeInstall(p, cwd);
+			const state = disabled.has(p.id) ? "[ ]" : active ? "[x]" : "[-]";
+			const inst = displayInstall(p, cwd);
+			return `${state} ${p.id}  (${scopeLabel(p)}; ${resourceTag(inst.installPath)})`;
+		});
 		ctx.ui.notify(
 			plugins.length
-				? `Claude plugins:\n${lines.join("\n")}`
+				? `Claude plugins ([x] active here, [-] out of scope, [ ] disabled):\n${lines.join("\n")}`
 				: "No Claude plugins found (~/.claude/plugins/installed_plugins.json).",
 			"info",
 		);
@@ -259,15 +307,22 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
 			const rows: string[] = [];
 			rows.push(theme.fg("accent", theme.bold("Claude plugins in pi")));
+			rows.push(theme.fg("dim", `cwd: ${cwd}`));
 			rows.push(theme.fg("dim", "space: toggle   ↑/↓: move   enter: apply+reload   esc: cancel"));
 			rows.push("");
 			plugins.forEach((p, i) => {
-				const on = !disabled.has(p.id);
-				const box = on ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
+				const enabled = !disabled.has(p.id);
+				const active = !!activeInstall(p, cwd);
+				const box = !enabled
+					? theme.fg("dim", "[ ]")
+					: active
+						? theme.fg("success", "[x]")
+						: theme.fg("muted", "[-]");
 				const pointer = i === cursor ? theme.fg("accent", "›") : " ";
 				const label = i === cursor ? theme.bold(p.id) : p.id;
-				const tag = theme.fg("dim", `  ${resourceTag(p)}`);
-				rows.push(`${pointer} ${box} ${label}${tag}`);
+				const scope = theme.fg(active ? "text" : "muted", scopeLabel(p));
+				const tag = theme.fg("dim", resourceTag(displayInstall(p, cwd).installPath));
+				rows.push(`${pointer} ${box} ${label}  ${scope}  ${tag}`);
 			});
 			container.addChild(border);
 			for (const r of rows) container.addChild(new Text(r, 1, 0));
@@ -312,20 +367,25 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 // ── Extension entry ────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-	// Skills + commands: contributed dynamically, no settings.json edits.
-	pi.on("resources_discover", () => {
+	// Skills + commands: contributed dynamically, scoped to the current cwd.
+	// user-scoped plugins are global; project/local plugins only load when the
+	// cwd is inside their projectPath. No settings.json edits.
+	pi.on("resources_discover", (event) => {
 		const skillPaths: string[] = [];
 		const promptPaths: string[] = [];
-		for (const p of enabledPlugins()) {
-			if (p.skillsDir) skillPaths.push(p.skillsDir);
-			if (p.commandsDir) promptPaths.push(p.commandsDir);
+		for (const { install } of activePlugins(event.cwd)) {
+			const skills = dirIfExists(path.join(install.installPath, "skills"));
+			const commands = dirIfExists(path.join(install.installPath, "commands"));
+			if (skills) skillPaths.push(skills);
+			if (commands) promptPaths.push(commands);
 		}
 		return { skillPaths, promptPaths };
 	});
 
-	// Agents: registered against pi-subagents after all extensions have loaded.
-	pi.on("session_start", () => {
-		registerAgents();
+	// Agents: registered against pi-subagents after all extensions have loaded,
+	// scoped to the current cwd.
+	pi.on("session_start", (_event, ctx) => {
+		registerAgents(ctx.cwd);
 	});
 
 	pi.on("session_shutdown", () => {
