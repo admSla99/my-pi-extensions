@@ -9,7 +9,8 @@
     "pi-tmux-notify",
     "pi-prompt-enhancer",
     "pi-context-report",
-    "pi-git-statusline"
+    "pi-git-statusline",
+    "pi-claude-plugins"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present"

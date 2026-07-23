@@ -1,0 +1,23 @@
+{
+  "name": "pi-claude-plugins",
+  "version": "0.1.0",
+  "description": "Pi extension: discover, port and manage Claude Code plugins (skills, commands, agents) inside pi without hand-editing settings.json. Interactive /plugins toggle UI.",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
