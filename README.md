@@ -40,7 +40,7 @@ Each extension's `package.json` is the source of truth for its own peer/dev depe
 - **[pi-prompt-enhancer/](./pi-prompt-enhancer)** — Minimal, configurable prompt rewriter. `Alt+E` / `/pe` rewrites the editor draft using Markdown-defined techniques, with GPT/Claude family branching and draft-language preservation.
 - **[pi-context-report/](./pi-context-report)** — `/context` command reporting context-window usage (system prompt / user / tool calls + results / cache) for the current session.
 - **[pi-git-statusline/](./pi-git-statusline)** — git status line: `+added -removed (~N files)` for the working tree vs HEAD (incl. untracked), committed changes of the branch vs its base, and the open PR number (via `gh`).
-- **[pi-git-ship/](./pi-git-ship)** — `/ship` stages, commits, and pushes through an isolated GPT-5.6 Luna call, or uses a supplied commit subject without AI.
+- **[pi-git-ship/](./pi-git-ship)** — `/ship` moves default-branch changes to a feature branch, commits and pushes, then reuses or opens a PR; commit subjects use isolated GPT-5.6 Luna or supplied text.
 - **[pi-claude-plugins/](./pi-claude-plugins)** — use Claude Code plugins (skills, commands, agents) from pi without editing `settings.json`. Scope-aware discovery from `~/.claude/plugins`, with an interactive `/plugins` toggle UI.
 
 ## Adding a new extension

@@ -1,7 +1,7 @@
 {
   "name": "pi-git-ship",
   "version": "0.1.0",
-  "description": "Pi extension: /ship stages all changes, generates a commit message in an isolated cheap-model session, commits, and pushes",
+  "description": "Pi extension: /ship stages, commits, pushes, and opens or updates a pull request from the correct branch",
   "type": "module",
   "main": "index.ts",
   "license": "MIT",
