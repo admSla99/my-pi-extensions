@@ -10,6 +10,7 @@
     "pi-prompt-enhancer",
     "pi-context-report",
     "pi-git-statusline",
+    "pi-git-ship",
     "pi-claude-plugins"
   ],
   "scripts": {
