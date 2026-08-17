@@ -18,13 +18,13 @@ pi -e ./pi-git-ship/index.ts
 
 ## Usage
 
-Generate a commit subject with `openai/gpt-5.6-luna`, then commit and push:
+Generate commit and pull-request metadata with one `openai/gpt-5.6-luna` call, then commit and push:
 
 ```text
 /ship
 ```
 
-Supply the subject directly to skip the model call:
+Supply the commit subject directly. On a feature branch with an existing PR this skips the model call; a new PR still needs one call for its title and description:
 
 ```text
 /ship fix: preserve login redirect
@@ -38,4 +38,4 @@ Supply the subject directly to skip the model call:
 
 A branch without an upstream is pushed to `origin`, or to the only configured remote, with upstream tracking enabled. A clean default branch with no local commits is left unchanged.
 
-The generated-subject flow runs an isolated, ephemeral Pi process with tools, extensions, skills, prompt templates, and context files disabled. It sends recent commit subjects and up to 48,000 characters of the staged diff to OpenAI. Supplying the subject avoids sending the diff to a model. Pull-request handling requires an authenticated GitHub CLI (`gh`).
+The metadata flow runs an isolated, ephemeral Pi process with tools, extensions, skills, prompt templates, and context files disabled. One call produces the commit subject, a short branch name, a focused PR title, and a non-empty Markdown description from both committed and staged changes. It follows a repository PR template when present and sends at most 48,000 characters of diff to OpenAI. Pull-request handling requires an authenticated GitHub CLI (`gh`).
