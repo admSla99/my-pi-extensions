@@ -1,0 +1,22 @@
+{
+  "name": "pi-git-ship",
+  "version": "0.1.0",
+  "description": "Pi extension: /ship stages all changes, generates a commit message in an isolated cheap-model session, commits, and pushes",
+  "type": "module",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
