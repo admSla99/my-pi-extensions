@@ -1,4 +1,3 @@
-import { complete } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, Model, ProviderStreamOptions } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveFamily } from "./family.js";
@@ -52,7 +51,10 @@ export async function enhanceDraft(
     preserveDraftLanguage: settings.preserveDraftLanguage,
   });
 
-  const fn = services.completeFn ?? complete;
+  const fn =
+    services.completeFn ??
+    ((model: Model<Api>, context: Context, options?: ProviderStreamOptions) =>
+      ctx.modelRegistry.complete(model, context, options));
   const options: ProviderStreamOptions = {
     ...(typeof auth.apiKey === "string" ? { apiKey: auth.apiKey } : {}),
     ...(auth.headers ? { headers: auth.headers } : {}),
