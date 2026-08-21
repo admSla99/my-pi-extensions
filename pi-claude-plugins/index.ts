@@ -9,9 +9,9 @@
  *
  * Source of truth for what is installed is Claude Code's own registry at
  * ~/.claude/plugins/installed_plugins.json. This extension does NOT install or
- * update plugins itself — install them with Claude Code, then toggle which ones
- * are active in pi with /plugins. Enable/disable state lives in a small pi-side
- * file; everything else is derived from disk on each (re)load.
+ * update plugins itself — install them with Claude Code, then manage which are
+ * active in pi with /plugins. Enable/disable and optional Pi scope overrides
+ * live in a small pi-side state file.
  */
 
 import * as fs from "node:fs";
@@ -56,13 +56,13 @@ const DEFAULT_AGENT_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "l
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-interface Install {
+export interface Install {
 	scope: string; // "user" | "project" | "local"
 	projectPath?: string; // set for project/local scope
 	installPath: string;
 }
 
-interface Plugin {
+export interface Plugin {
 	id: string; // "name@marketplace"
 	name: string;
 	marketplace: string;
@@ -72,38 +72,60 @@ interface Plugin {
 type ResourceType = "skills" | "commands" | "agents";
 const RESOURCE_TYPES: ResourceType[] = ["skills", "commands", "agents"];
 
-interface State {
+export type ScopeOverride = "global" | string[];
+
+export interface State {
 	disabled: string[]; // whole plugins turned off
 	// Per-plugin resource types turned off, e.g. { "agentix@mp": ["commands"] }.
 	typesOff: Record<string, ResourceType[]>;
+	// Pi-only scope overrides. Missing means use the Claude install scope.
+	scopes: Record<string, ScopeOverride>;
 }
 
-// ── State (pi-side enable/disable; default everything enabled) ──────────
+// ── State (pi-side toggles and scopes; defaults come from Claude) ───────
 
-function loadState(): State {
+export function loadState(statePath = STATE_PATH): State {
 	try {
-		const raw = JSON.parse(fs.readFileSync(STATE_PATH, "utf-8"));
+		const raw = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+		const scopes: Record<string, ScopeOverride> = {};
+		if (raw?.scopes && typeof raw.scopes === "object") {
+			for (const [id, value] of Object.entries(raw.scopes)) {
+				if (value === "global") scopes[id] = value;
+				else if (Array.isArray(value) && value.every((p) => typeof p === "string")) {
+					scopes[id] = value;
+				}
+			}
+		}
 		return {
 			disabled: Array.isArray(raw?.disabled) ? raw.disabled : [],
 			typesOff:
 				raw?.typesOff && typeof raw.typesOff === "object" ? raw.typesOff : {},
+			scopes,
 		};
 	} catch {
-		return { disabled: [], typesOff: {} };
+		return { disabled: [], typesOff: {}, scopes: {} };
 	}
 }
 
-function saveState(state: State): void {
+export function saveState(state: State, statePath = STATE_PATH): void {
 	// Drop empty type arrays to keep the file tidy.
 	const typesOff: Record<string, ResourceType[]> = {};
 	for (const [id, types] of Object.entries(state.typesOff)) {
 		if (types.length) typesOff[id] = types;
 	}
-	fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
-	fs.writeFileSync(
-		STATE_PATH,
-		JSON.stringify({ disabled: state.disabled, typesOff }, null, 2),
-	);
+	fs.mkdirSync(path.dirname(statePath), { recursive: true });
+	const tempPath = `${statePath}.${process.pid}.tmp`;
+	try {
+		fs.writeFileSync(
+			tempPath,
+			`${JSON.stringify({ disabled: state.disabled, typesOff, scopes: state.scopes }, null, 2)}\n`,
+		);
+		fs.renameSync(tempPath, statePath);
+	} finally {
+		try {
+			fs.unlinkSync(tempPath);
+		} catch {}
+	}
 }
 
 /** A resource type is active for a plugin unless its plugin or type is off. */
@@ -171,34 +193,58 @@ function within(cwd: string, dir: string): boolean {
  * The install that applies to `cwd`, or undefined if the plugin is out of scope
  * here. `user` scope is global; `project`/`local` only apply under projectPath.
  */
-function activeInstall(plugin: Plugin, cwd: string): Install | undefined {
+export function activeInstall(
+	plugin: Plugin,
+	cwd: string,
+	state: State = loadState(),
+): Install | undefined {
+	if (Object.hasOwn(state.scopes, plugin.id)) {
+		const override = state.scopes[plugin.id];
+		if (override === "global") return plugin.installs[0];
+		const projectPath = override.find((p) => within(cwd, p));
+		return projectPath
+			? { ...plugin.installs[0], scope: "local", projectPath }
+			: undefined;
+	}
 	const user = plugin.installs.find((i) => i.scope === "user");
 	if (user) return user;
 	return plugin.installs.find((i) => i.projectPath && within(cwd, i.projectPath));
 }
 
-/** Human-readable scope label for the UI. */
-function scopeLabel(plugin: Plugin): string {
-	if (plugin.installs.some((i) => i.scope === "user")) return "global";
-	const scoped = plugin.installs.find((i) => i.projectPath);
-	if (!scoped) return "?";
+function shortPath(p: string): string {
 	const home = os.homedir();
-	const p = scoped.projectPath!.startsWith(home)
-		? `~${scoped.projectPath!.slice(home.length)}`
-		: scoped.projectPath!;
-	return `${scoped.scope}:${p}`;
+	return p === home || p.startsWith(`${home}${path.sep}`)
+		? `~${p.slice(home.length)}`
+		: p;
 }
 
-function enabledPlugins(): Plugin[] {
-	const disabled = new Set(loadState().disabled);
+/** Human-readable scope label for the UI. */
+export function scopeLabel(plugin: Plugin, state: State = loadState()): string {
+	if (Object.hasOwn(state.scopes, plugin.id)) {
+		const override = state.scopes[plugin.id];
+		if (override === "global") return "pi:global";
+		return override.length ? `pi:${override.map(shortPath).join(",")}` : "pi:none";
+	}
+	if (plugin.installs.some((i) => i.scope === "user")) return "global";
+	const scoped = plugin.installs.filter((i) => i.projectPath);
+	return scoped.length
+		? scoped.map((i) => `${i.scope}:${shortPath(i.projectPath!)}`).join(",")
+		: "?";
+}
+
+function enabledPlugins(state: State = loadState()): Plugin[] {
+	const disabled = new Set(state.disabled);
 	return discoverPlugins().filter((p) => !disabled.has(p.id));
 }
 
 /** Enabled plugins whose scope applies to `cwd`, paired with the active install. */
-function activePlugins(cwd: string): Array<{ plugin: Plugin; install: Install }> {
+function activePlugins(
+	cwd: string,
+	state: State = loadState(),
+): Array<{ plugin: Plugin; install: Install }> {
 	const result: Array<{ plugin: Plugin; install: Install }> = [];
-	for (const plugin of enabledPlugins()) {
-		const install = activeInstall(plugin, cwd);
+	for (const plugin of enabledPlugins(state)) {
+		const install = activeInstall(plugin, cwd, state);
 		if (install) result.push({ plugin, install });
 	}
 	return result;
@@ -250,7 +296,7 @@ function registerAgents(cwd: string): string[] {
 	if (!hook) return []; // pi-subagents not installed; skills/commands still work.
 	const state = loadState();
 	const names: string[] = [];
-	for (const { plugin, install } of activePlugins(cwd)) {
+	for (const { plugin, install } of activePlugins(cwd, state)) {
 		if (!typeActive(state, plugin.id, "agents")) continue;
 		for (const file of listMd(path.join(install.installPath, "agents"))) {
 			try {
@@ -280,18 +326,101 @@ function registerAgents(cwd: string): string[] {
 // ── Interactive /plugins toggle UI ─────────────────────────────────────
 
 /** Install to display in the UI: the one active here, else the first known. */
-function displayInstall(plugin: Plugin, cwd: string): Install {
-	return activeInstall(plugin, cwd) ?? plugin.installs[0];
+function displayInstall(plugin: Plugin, cwd: string, state: State): Install {
+	return activeInstall(plugin, cwd, state) ?? plugin.installs[0];
 }
 
 /** Which resource types a plugin actually ships (from its display install). */
-function pluginHas(plugin: Plugin, cwd: string): Record<ResourceType, boolean> {
-	const ip = displayInstall(plugin, cwd).installPath;
+function pluginHas(
+	plugin: Plugin,
+	cwd: string,
+	state: State,
+): Record<ResourceType, boolean> {
+	const ip = displayInstall(plugin, cwd, state).installPath;
 	return {
 		skills: !!dirIfExists(path.join(ip, "skills")),
 		commands: !!dirIfExists(path.join(ip, "commands")),
 		agents: listMd(path.join(ip, "agents")).length > 0,
 	};
+}
+
+export function resolveProjectPath(input: string, cwd: string): string {
+	const trimmed = input.trim();
+	if (!trimmed) throw new Error("Project path is required.");
+	const expanded = trimmed === "~"
+		? HOME
+		: trimmed.startsWith(`~${path.sep}`)
+			? path.join(HOME, trimmed.slice(2))
+			: trimmed;
+	const resolved = fs.realpathSync(path.resolve(cwd, expanded));
+	if (!fs.statSync(resolved).isDirectory()) throw new Error("Project path is not a directory.");
+	return resolved;
+}
+
+function projectScopes(plugin: Plugin, state: State): string[] | undefined {
+	if (Object.hasOwn(state.scopes, plugin.id)) {
+		const override = state.scopes[plugin.id];
+		return override === "global" ? undefined : override;
+	}
+	return plugin.installs.flatMap((i) => i.projectPath ? [i.projectPath] : []);
+}
+
+async function editPluginScope(
+	ctx: ExtensionCommandContext,
+	plugin: Plugin,
+	state: State,
+): Promise<void> {
+	const action = await ctx.ui.select(
+		`Pi scope for ${plugin.id} (${scopeLabel(plugin, state)}):`,
+		[
+			"Global (all projects)",
+			"Current project only",
+			"Choose project only…",
+			"Add project…",
+			"Remove project…",
+			"No scope (load nowhere)",
+			"Use Claude scope",
+		],
+	);
+	if (!action) return;
+
+	if (action === "Global (all projects)") {
+		state.scopes[plugin.id] = "global";
+		return;
+	}
+	if (action === "Current project only") {
+		state.scopes[plugin.id] = [fs.realpathSync(ctx.cwd)];
+		return;
+	}
+	if (action === "No scope (load nowhere)") {
+		state.scopes[plugin.id] = [];
+		return;
+	}
+	if (action === "Use Claude scope") {
+		delete state.scopes[plugin.id];
+		return;
+	}
+	if (action === "Remove project…") {
+		const projects = projectScopes(plugin, state);
+		if (!projects?.length) {
+			ctx.ui.notify("This plugin has no project scopes to remove.", "warning");
+			return;
+		}
+		const selected = await ctx.ui.select("Remove project scope:", projects);
+		if (selected) state.scopes[plugin.id] = projects.filter((p) => p !== selected);
+		return;
+	}
+
+	const input = await ctx.ui.input("Project path:", ctx.cwd);
+	if (input === undefined) return;
+	try {
+		const projectPath = resolveProjectPath(input, ctx.cwd);
+		state.scopes[plugin.id] = action === "Choose project only…"
+			? [projectPath]
+			: Array.from(new Set([...(projectScopes(plugin, state) ?? []), projectPath]));
+	} catch (error) {
+		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+	}
 }
 
 const TYPE_LETTER: Record<ResourceType, string> = { skills: "S", commands: "C", agents: "A" };
@@ -308,24 +437,39 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 		return;
 	}
 
-	// Working copy of state, mutated in the UI, persisted on apply.
-	const disabled = new Set(loadState().disabled);
+	// Working copy of state, mutated in the UI, persisted only on apply.
+	const saved = loadState();
+	const disabled = new Set(saved.disabled);
 	const typesOff = new Map<string, Set<ResourceType>>();
-	for (const [id, types] of Object.entries(loadState().typesOff)) {
+	for (const [id, types] of Object.entries(saved.typesOff)) {
 		typesOff.set(id, new Set(types));
 	}
+	const scopes = Object.fromEntries(
+		Object.entries(saved.scopes).map(([id, value]) => [
+			id,
+			Array.isArray(value) ? [...value] : value,
+		]),
+	) as Record<string, ScopeOverride>;
+	const currentState = (): State => ({
+		disabled: Array.from(disabled),
+		typesOff: Object.fromEntries(
+			Array.from(typesOff, ([id, types]) => [id, Array.from(types)]),
+		),
+		scopes,
+	});
 	const typeOn = (id: string, t: ResourceType) =>
 		!disabled.has(id) && !typesOff.get(id)?.has(t);
 
-	if (!ctx.hasUI) {
+	if (ctx.mode !== "tui") {
+		const state = currentState();
 		const lines = plugins.map((p) => {
-			const active = !!activeInstall(p, cwd);
+			const active = !!activeInstall(p, cwd, state);
 			const box = disabled.has(p.id) ? "[ ]" : active ? "[x]" : "[-]";
-			const has = pluginHas(p, cwd);
+			const has = pluginHas(p, cwd, state);
 			const types = RESOURCE_TYPES.filter((t) => has[t])
 				.map((t) => `${t}${typeOn(p.id, t) ? "✓" : "✗"}`)
 				.join(" ");
-			return `${box} ${p.id}  (${scopeLabel(p)}; ${types || "no resources"})`;
+			return `${box} ${p.id}  (${scopeLabel(p, state)}; ${types || "no resources"})`;
 		});
 		ctx.ui.notify(
 			`Claude plugins ([x] active here, [-] out of scope, [ ] disabled):\n${lines.join("\n")}`,
@@ -334,104 +478,113 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 		return;
 	}
 
-	const changed = await ctx.ui.custom<boolean>((tui, theme, _kb, done) => {
-		let cursor = 0;
-		const refresh = () => tui.requestRender();
+	type UiResult = "apply" | "cancel" | { scopeId: string };
+	let cursor = 0;
+	let result: UiResult;
+	do {
+		result = await ctx.ui.custom<UiResult>((tui, theme, _kb, done) => {
+			const refresh = () => tui.requestRender();
 
-		function typeBadges(p: Plugin): string {
-			const has = pluginHas(p, cwd);
-			return RESOURCE_TYPES.map((t) => {
-				const letter = TYPE_LETTER[t];
-				if (!has[t]) return theme.fg("dim", "·");
-				return typeOn(p.id, t)
-					? theme.fg("success", letter)
-					: theme.fg("error", letter.toLowerCase());
-			}).join(" ");
-		}
-
-		// Build a fresh container each render so it always reflects live state.
-		function build(): Container {
-			const container = new Container();
-			const border = new DynamicBorder((s: string) => theme.fg("accent", s));
-			const rows: string[] = [];
-			rows.push(theme.fg("accent", theme.bold("Claude plugins in pi")));
-			rows.push(theme.fg("dim", `cwd: ${cwd}`));
-			rows.push(
-				theme.fg("dim", "space: plugin on/off   s/c/a: skills/commands/agents"),
-			);
-			rows.push(theme.fg("dim", "↑/↓: move   enter: apply+reload   esc: cancel"));
-			rows.push("");
-			plugins.forEach((p, i) => {
-				const enabled = !disabled.has(p.id);
-				const active = !!activeInstall(p, cwd);
-				const box = !enabled
-					? theme.fg("dim", "[ ]")
-					: active
-						? theme.fg("success", "[x]")
-						: theme.fg("muted", "[-]");
-				const pointer = i === cursor ? theme.fg("accent", "›") : " ";
-				const label = i === cursor ? theme.bold(p.id) : p.id;
-				const scope = theme.fg(active ? "text" : "muted", scopeLabel(p));
-				rows.push(`${pointer} ${box} ${typeBadges(p)}  ${label}  ${scope}`);
-			});
-			container.addChild(border);
-			for (const r of rows) container.addChild(new Text(r, 1, 0));
-			container.addChild(border);
-			return container;
-		}
-
-		function toggleType(p: Plugin, t: ResourceType) {
-			if (!pluginHas(p, cwd)[t]) return; // no such resource — ignore
-			let set = typesOff.get(p.id);
-			if (!set) {
-				set = new Set();
-				typesOff.set(p.id, set);
+			function typeBadges(p: Plugin): string {
+				const state = currentState();
+				const has = pluginHas(p, cwd, state);
+				return RESOURCE_TYPES.map((t) => {
+					const letter = TYPE_LETTER[t];
+					if (!has[t]) return theme.fg("dim", "·");
+					return typeOn(p.id, t)
+						? theme.fg("success", letter)
+						: theme.fg("error", letter.toLowerCase());
+				}).join(" ");
 			}
-			if (set.has(t)) set.delete(t);
-			else set.add(t);
-		}
 
-		return {
-			render: (width: number): string[] => build().render(width),
-			invalidate: () => {},
-			handleInput: (data: string) => {
-				const p = plugins[cursor];
-				if (matchesKey(data, Key.up) || data === "k") {
-					cursor = (cursor - 1 + plugins.length) % plugins.length;
-					refresh();
-				} else if (matchesKey(data, Key.down) || data === "j") {
-					cursor = (cursor + 1) % plugins.length;
-					refresh();
-				} else if (data === " ") {
-					if (disabled.has(p.id)) disabled.delete(p.id);
-					else disabled.add(p.id);
-					refresh();
-				} else if (data === "s") {
-					toggleType(p, "skills");
-					refresh();
-				} else if (data === "c") {
-					toggleType(p, "commands");
-					refresh();
-				} else if (data === "a") {
-					toggleType(p, "agents");
-					refresh();
-				} else if (matchesKey(data, Key.enter)) {
-					done(true);
-				} else if (matchesKey(data, Key.escape)) {
-					done(false);
+			// Build fresh each render so it always reflects the working state.
+			function build(): Container {
+				const state = currentState();
+				const container = new Container();
+				const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+				const rows: string[] = [];
+				rows.push(theme.fg("accent", theme.bold("Claude plugins in pi")));
+				rows.push(theme.fg("dim", `cwd: ${cwd}`));
+				rows.push(theme.fg("dim", "space: on/off   s/c/a: resources   p: scope"));
+				rows.push(theme.fg("dim", "↑/↓: move   enter: apply+reload   esc: cancel"));
+				rows.push("");
+				plugins.forEach((p, i) => {
+					const enabled = !disabled.has(p.id);
+					const active = !!activeInstall(p, cwd, state);
+					const box = !enabled
+						? theme.fg("dim", "[ ]")
+						: active
+							? theme.fg("success", "[x]")
+							: theme.fg("muted", "[-]");
+					const pointer = i === cursor ? theme.fg("accent", "›") : " ";
+					const label = i === cursor ? theme.bold(p.id) : p.id;
+					const scope = theme.fg(active ? "text" : "muted", scopeLabel(p, state));
+					rows.push(`${pointer} ${box} ${typeBadges(p)}  ${label}  ${scope}`);
+				});
+				container.addChild(border);
+				for (const row of rows) container.addChild(new Text(row, 1, 0));
+				container.addChild(border);
+				return container;
+			}
+
+			function toggleType(p: Plugin, type: ResourceType) {
+				if (!pluginHas(p, cwd, currentState())[type]) return;
+				let set = typesOff.get(p.id);
+				if (!set) {
+					set = new Set();
+					typesOff.set(p.id, set);
 				}
-			},
-		};
-	});
+				if (set.has(type)) set.delete(type);
+				else set.add(type);
+			}
 
-	if (!changed) {
+			return {
+				render: (width: number): string[] => build().render(width),
+				invalidate: () => {},
+				handleInput: (data: string) => {
+					const plugin = plugins[cursor];
+					if (matchesKey(data, Key.up) || data === "k") {
+						cursor = (cursor - 1 + plugins.length) % plugins.length;
+						refresh();
+					} else if (matchesKey(data, Key.down) || data === "j") {
+						cursor = (cursor + 1) % plugins.length;
+						refresh();
+					} else if (data === " ") {
+						if (disabled.has(plugin.id)) disabled.delete(plugin.id);
+						else disabled.add(plugin.id);
+						refresh();
+					} else if (data === "s") {
+						toggleType(plugin, "skills");
+						refresh();
+					} else if (data === "c") {
+						toggleType(plugin, "commands");
+						refresh();
+					} else if (data === "a") {
+						toggleType(plugin, "agents");
+						refresh();
+					} else if (data === "p") {
+						done({ scopeId: plugin.id });
+					} else if (matchesKey(data, Key.enter)) {
+						done("apply");
+					} else if (matchesKey(data, Key.escape)) {
+						done("cancel");
+					}
+				},
+			};
+		});
+		if (typeof result === "object") {
+			const scopeId = result.scopeId;
+			const plugin = plugins.find((p) => p.id === scopeId);
+			if (plugin) await editPluginScope(ctx, plugin, currentState());
+		}
+	} while (typeof result === "object");
+
+	if (result !== "apply") {
 		ctx.ui.notify("Plugins unchanged.", "info");
 		return;
 	}
 
-	const typesOffObj: Record<string, ResourceType[]> = {};
-	for (const [id, set] of typesOff) typesOffObj[id] = Array.from(set);
-	saveState({ disabled: Array.from(disabled), typesOff: typesOffObj });
+	saveState(currentState());
 	ctx.ui.notify("Saved. Reloading resources…", "info");
 	await ctx.reload();
 }
@@ -440,13 +593,13 @@ async function showToggleUi(ctx: ExtensionCommandContext): Promise<void> {
 
 export default function (pi: ExtensionAPI) {
 	// Skills + commands: contributed dynamically, scoped to the current cwd.
-	// user-scoped plugins are global; project/local plugins only load when the
-	// cwd is inside their projectPath. No settings.json edits.
+	// Pi scope overrides win; otherwise Claude's user/project/local scope applies.
+	// Claude's registry and settings are never edited.
 	pi.on("resources_discover", (event) => {
 		const state = loadState();
 		const skillPaths: string[] = [];
 		const promptPaths: string[] = [];
-		for (const { plugin, install } of activePlugins(event.cwd)) {
+		for (const { plugin, install } of activePlugins(event.cwd, state)) {
 			const skills = dirIfExists(path.join(install.installPath, "skills"));
 			const commands = dirIfExists(path.join(install.installPath, "commands"));
 			if (skills && typeActive(state, plugin.id, "skills")) skillPaths.push(skills);
@@ -466,7 +619,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("plugins", {
-		description: "Manage Claude Code plugins (skills, commands, agents) in pi",
+		description: "Manage Claude Code plugin resources and Pi scopes",
 		handler: async (_args, ctx) => {
 			await showToggleUi(ctx);
 		},

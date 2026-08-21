@@ -41,7 +41,7 @@ Each extension's `package.json` is the source of truth for its own peer/dev depe
 - **[pi-context-report/](./pi-context-report)** — `/context` command reporting context-window usage (system prompt / user / tool calls + results / cache) for the current session.
 - **[pi-git-statusline/](./pi-git-statusline)** — git status line: `+added -removed (~N files)` for the working tree vs HEAD (incl. untracked), committed changes of the branch vs its base, and the open PR number (via `gh`).
 - **[pi-git-ship/](./pi-git-ship)** — `/ship` moves default-branch changes to a short feature branch, commits and pushes, then reuses or opens a PR with contextual metadata from one isolated GPT-5.6 Luna call.
-- **[pi-claude-plugins/](./pi-claude-plugins)** — use Claude Code plugins (skills, commands, agents) from pi without editing `settings.json`. Scope-aware discovery from `~/.claude/plugins`, with an interactive `/plugins` toggle UI.
+- **[pi-claude-plugins/](./pi-claude-plugins)** — use Claude Code plugins (skills, commands, agents) from pi without editing `settings.json`. Scope-aware discovery from `~/.claude/plugins`, with interactive `/plugins` toggles and Pi-specific scope overrides.
 
 ## Adding a new extension
 
