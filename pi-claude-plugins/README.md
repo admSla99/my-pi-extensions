@@ -1,8 +1,8 @@
 # pi-claude-plugins
 
 Use your **Claude Code plugins** (skills, commands, agents) from inside **pi** —
-without hand-editing `settings.json`. Toggle which plugins are active with an
-interactive `/plugins` UI.
+without hand-editing `settings.json`. Manage activation, resource types, and
+Pi-specific project/global scopes with an interactive `/plugins` UI.
 
 ## What it does
 
@@ -16,9 +16,9 @@ wires its resources into pi automatically:
 | `commands/*.md` | prompt templates (`/name`) | `resources_discover` → `promptPaths` |
 | `agents/*.md` | subagents | registered via the [`pi-subagents`](https://github.com/amosblomqvist/pi-subagents) hook |
 
-No `settings.json` edits, no symlinks. Everything is derived from disk on each
-load, so plugins you install/update **with Claude Code** show up in pi after a
-reload.
+Plugin resources are derived from disk on each load, so plugins you
+install/update **with Claude Code** show up in pi after a reload. Pi-specific
+choices live in a separate state file.
 
 `hooks/` are Claude-specific and are **not** ported.
 
@@ -37,13 +37,19 @@ skills/commands/agents while you run pi inside `~/Projects/foo`; it stays out of
 scope everywhere else. Because pi rediscovers resources per session, switching
 projects (or `/reload`) re-applies scoping.
 
+Press `p` in `/plugins` to override that scope for Pi. A plugin can be global,
+limited to one or more project directories, inactive everywhere, or reset to
+its Claude scope. These overrides only control Pi resource loading; Claude's
+registry and settings remain the installation source of truth.
+
 In the `/plugins` list the checkbox reflects this:
 
 - `[x]` enabled **and** active in the current cwd
 - `[-]` enabled but out of scope here (its project is elsewhere)
 - `[ ]` disabled
 
-Each row also shows the scope (`global`, or `local:~/Projects/foo`).
+Each row also shows the scope. Overrides are prefixed with `pi:`, for example
+`pi:global`, `pi:~/Projects/foo`, or `pi:none`.
 
 ## Requirements
 
@@ -84,6 +90,8 @@ Opens an interactive list of every discovered Claude plugin:
 - `space` — enable/disable the whole plugin
 - `s` / `c` / `a` — toggle just **skills** / **commands** / **agents** for the
   selected plugin
+- `p` — set the Pi scope: global, current/other/additional projects, no scope,
+  or the original Claude scope
 - `enter` — save and reload resources
 - `esc` — cancel
 
@@ -100,20 +108,28 @@ reload.
 
 ## State
 
-Enable/disable choices live in `~/.pi/agent/claude-plugins-state.json`:
+Pi choices live in `~/.pi/agent/claude-plugins-state.json`:
 
 ```json
 {
   "disabled": ["plugin-name@marketplace"],
-  "typesOff": { "other-plugin@marketplace": ["commands"] }
+  "typesOff": { "other-plugin@marketplace": ["commands"] },
+  "scopes": {
+    "global-plugin@marketplace": "global",
+    "project-plugin@marketplace": ["/work/foo", "/work/bar"],
+    "inactive-plugin@marketplace": []
+  }
 }
 ```
 
 - `disabled` — whole plugins turned off.
 - `typesOff` — per-plugin resource types turned off (`skills` / `commands` /
   `agents`).
+- `scopes` — Pi scope overrides: `"global"`, project-root arrays, or an empty
+  array for no active scope.
 
-Anything not listed is enabled. Delete the file to re-enable everything.
+Anything not listed uses its default. Removing a `scopes` entry restores the
+scope recorded by Claude Code; deleting the state file restores all defaults.
 
 ## Notes / limitations
 
