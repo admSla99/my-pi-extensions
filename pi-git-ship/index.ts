@@ -294,7 +294,7 @@ function runPi(prompt: string, cwd: string): Promise<string> {
 				"--model",
 				MODEL,
 				"--thinking",
-				"off",
+				"max",
 				"--system-prompt",
 				"Return exactly one valid JSON object and nothing else.",
 			],
