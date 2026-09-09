@@ -5,6 +5,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 const MODEL = "openai/gpt-5.6-luna";
 const MAX_DIFF_CHARS = 48_000;
+// ponytail: fixed budget for "max" thinking on real-size diffs; raise further if it still times out.
+const METADATA_TIMEOUT_MS = 240_000;
 
 interface ShipMetadata {
 	commit: string;
@@ -312,7 +314,7 @@ function runPi(prompt: string, cwd: string): Promise<string> {
 		const timeout = setTimeout(() => {
 			child.kill("SIGTERM");
 			finish(new Error(`${MODEL} timed out while generating ship metadata`));
-		}, 60_000);
+		}, METADATA_TIMEOUT_MS);
 		child.stdout.on("data", (chunk) => (stdout += chunk));
 		child.stderr.on("data", (chunk) => (stderr += chunk));
 		child.on("error", (error) => finish(error));
