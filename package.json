@@ -11,12 +11,17 @@
     "pi-context-report",
     "pi-git-statusline",
     "pi-git-ship",
-    "pi-claude-plugins"
+    "pi-claude-plugins",
+    "pi-claude-tool-view"
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.99.2",
+    "@earendil-works/pi-tui": "^0.99.2"
   }
 }
